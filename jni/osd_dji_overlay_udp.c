@@ -807,6 +807,8 @@ void osd_directfb(duss_disp_instance_handle_t *disp, duss_hal_obj_handle_t ion_h
     open_dji_radio_shm(&radio_shm);
     start_display(is_v2_goggles, disp, ion_handle);
 
+    dump_init();
+
     uint64_t event_number;
 
     while (!quit)
