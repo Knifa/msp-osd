@@ -25,6 +25,7 @@
 #include "msp/msp.h"
 #include "msp/msp_displayport.h"
 #include "util/fs_util.h"
+#include "util/time_util.h"
 
 #define MSP_PORT 7654
 #define DATA_PORT 7655
@@ -139,6 +140,11 @@ static enum display_mode_s {
 static display_info_t *current_display_info;
 
 int event_fd;
+
+static struct timespec dump_clock;
+static int dump_fd = -1;
+static void dump_init();
+static void dump_frame();
 
 /* FakeHD: spread characters for a small OSD across the whole screen */
 
@@ -324,6 +330,7 @@ static void render_screen() {
 
 static void msp_draw_complete() {
     render_screen();
+    dump_frame();
 }
 
 static void msp_callback(msp_msg_t *msp_message)
@@ -613,6 +620,51 @@ static void process_data_packet(uint8_t *buf, int len, dji_shm_state_t *radio_sh
         snprintf(str, 8, "A %2.1fV", packet->tx_voltage / 64.0f);
         display_print_string(overlay_display_info.char_width - 7, overlay_display_info.char_height - 7, str, 7);
     }
+}
+
+/* OSD dump */
+
+static void dump_init() {
+    if (dump_fd > 0) {
+        close(dump_fd);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &dump_clock);
+
+    time_t t = time(NULL);
+    struct tm tm = *localtime(&t);
+    char date_str[64];
+    strftime(date_str, sizeof(date_str), "%Y%m%dT%H%M%S", &tm);
+
+    char dump_path[256];
+    sprintf(dump_path, "/tmp/osd_dump_%s.bin", date_str);
+
+    dump_fd = open(dump_path, O_WRONLY | O_CREAT | O_TRUNC, 0);
+    assert(dump_fd > 0);
+}
+
+static void dump_frame() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    struct __attribute__((packed))
+    {
+        uint64_t timestamp_ms;
+        uint8_t is_hd;
+        uint8_t frame[MAX_DISPLAY_X * MAX_DISPLAY_Y];
+    } frame_dump;
+
+    frame_dump.timestamp_ms = timespec_subtract_ns(&now, &dump_clock) / 1000000;
+    frame_dump.is_hd = current_display_info == &hd_display_info;
+    for (uint8_t y = 0; y < MAX_DISPLAY_Y; y++)
+    {
+        for (uint8_t x = 0; x < MAX_DISPLAY_X; x++)
+        {
+            frame_dump.frame[(y * MAX_DISPLAY_X) + x] = msp_character_map[x][y];
+        }
+    }
+
+    write(dump_fd, &frame_dump, sizeof(frame_dump));
 }
 
 /* Public OSD enable/disable methods */
